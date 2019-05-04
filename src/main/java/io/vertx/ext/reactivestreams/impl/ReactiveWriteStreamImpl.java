@@ -16,7 +16,9 @@
 
 package io.vertx.ext.reactivestreams.impl;
 
+import io.vertx.core.AsyncResult;
 import io.vertx.core.Context;
+import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.ext.reactivestreams.ReactiveWriteStream;
@@ -32,7 +34,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class ReactiveWriteStreamImpl<T> implements ReactiveWriteStream<T> {
 
   private Set<SubscriptionImpl> subscriptions = new HashSet<>();
-  private final Queue<T> pending = new ArrayDeque<>();
+  private final Queue<Item<T>> pending = new ArrayDeque<>();
   private Handler<Void> drainHandler;
   private int writeQueueMaxSize = DEFAULT_WRITE_QUEUE_MAX_SIZE;
   protected final Context ctx;
@@ -69,8 +71,13 @@ public class ReactiveWriteStreamImpl<T> implements ReactiveWriteStream<T> {
 
   @Override
   public synchronized ReactiveWriteStream<T> write(T data) {
+    return write(data, null);
+  }
+
+  @Override
+  public ReactiveWriteStream<T> write(T data, Handler<AsyncResult<Void>> handler) {
     checkClosed();
-    pending.add(data);
+    pending.add(new Item<>(data, null));
     checkSend();
     return this;
   }
@@ -106,6 +113,11 @@ public class ReactiveWriteStreamImpl<T> implements ReactiveWriteStream<T> {
   @Override
   public void end() {
     close();
+  }
+
+  @Override
+  public void end(Handler<AsyncResult<Void>> handler) {
+
   }
 
   @Override
@@ -158,9 +170,12 @@ public class ReactiveWriteStreamImpl<T> implements ReactiveWriteStream<T> {
     }
   }
 
-  private void sendToSubscribers(T data) {
+  private void sendToSubscribers(Item<T> item) {
     for (SubscriptionImpl sub: subscriptions) {
-      onNext(ctx, sub.subscriber, data);
+      onNext(ctx, sub.subscriber, item.value);
+      if (item.handler != null) {
+        item.handler.handle(Future.succeededFuture());
+      }
     }
   }
 
@@ -232,4 +247,14 @@ public class ReactiveWriteStreamImpl<T> implements ReactiveWriteStream<T> {
     subscriptions.removeIf(sub -> sub.subscriber == subscriber);
     subscriber.onError(error);
   }
+
+  static class Item<T> {
+    final T value;
+    final Handler<AsyncResult<Void>> handler;
+    Item(T value, Handler<AsyncResult<Void>> handler) {
+      this.value = value;
+      this.handler = handler;
+    }
+  }
+
 }
